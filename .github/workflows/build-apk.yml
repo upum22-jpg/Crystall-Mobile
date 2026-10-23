@@ -8,6 +8,11 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+      KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
 
@@ -26,17 +31,44 @@ jobs:
       - name: Add Android platform
         run: npx cap add android
 
+      - name: Generate app icons
+        run: npx @capacitor/assets generate --android
+
       - name: Sync web files
         run: npx cap sync android
 
-      - name: Build debug APK
+      - name: Build release APK (belum bertanda tangan)
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug
+          ./gradlew assembleRelease
+
+      - name: Siapkan keystore
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ] && [ -n "$KEYSTORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASSWORD" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > keystore.jks
+            echo "Memakai keystore dari GitHub Secrets"
+          else
+            echo "Secrets belum diisi: membuat keystore sementara (tanda tangan akan berbeda tiap build)"
+            echo "KEYSTORE_PASSWORD=crystall123" >> "$GITHUB_ENV"
+            echo "KEY_ALIAS=crystall" >> "$GITHUB_ENV"
+            echo "KEY_PASSWORD=crystall123" >> "$GITHUB_ENV"
+            keytool -genkeypair -keystore keystore.jks -alias crystall -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass crystall123 -keypass crystall123 -dname "CN=Crystall Mobile, O=Crystall, C=ID"
+          fi
+
+      - name: Tanda tangani APK
+        run: |
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          UNSIGNED=$(ls android/app/build/outputs/apk/release/*.apk | head -1)
+          "$BT/zipalign" -f -p 4 "$UNSIGNED" aligned.apk
+          "$BT/apksigner" sign --ks keystore.jks --ks-pass "pass:$KEYSTORE_PASSWORD" \
+            --ks-key-alias "$KEY_ALIAS" --key-pass "pass:$KEY_PASSWORD" \
+            --out CrystallMobile.apk aligned.apk
+          "$BT/apksigner" verify CrystallMobile.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: GridFotoCapture-APK
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: CrystallMobile-APK
+          path: CrystallMobile.apk

@@ -715,7 +715,7 @@ function ocrGmon(text){
   // Minus sering terbaca "=" atau "~", label sering salah (RSRO, RSORP), jadi dibuat toleran.
   const t=ocrNorm(text),old=ocrGmonOld(text);
   // Baris utama punya ciri "CQI / UL ... kbps", tanpa SINR, dan ada di atas baris RSSI/SNR.
-  // Baris SsRSRP (5G NR) sengaja diabaikan: yang dipakai angka pada kotak RSRP/RSRQ.
+  // Baris utama = RSRP/RSRQ (dipakai untuk 4G). Untuk 5G dipakai SsRSRP/SsRSRQ (lihat bawah).
   const L=t.split('\n'),cl=L.findIndex(l=>/SS[I1l!|]|SNR/i.test(l)),cutL=cl<0?Infinity:cl;
   const first=src=>{
     for(let li=0;li<L.length&&li<cutL;li++){
@@ -736,13 +736,24 @@ function ocrGmon(text){
     if(old.lte){rsrp=old.lte.rsrp;rsrq=old.lte.rsrq}
     else if(old.kind==='4g'&&(old.rsrp!==null||old.rsrq!==null)){rsrp=old.rsrp;rsrq=old.rsrq}
   }
+  // 5G: yang dipakai SsRSRP / SsRSRQ (baris NR), bukan RSRP/RSRQ LTE
+  const mSP=new RegExp('(?<![A-Za-z])S[sS5$]\\s?R[S5][ORE0]?R[PFE][^A-Za-z0-9]{0,6}?[-=~]?\\s?(\\d{2,3})(?!\\d)','i').exec(t);
+  const mSQ=new RegExp('(?<![A-Za-z])S[sS5$]\\s?R[S5][ORE0]?R[QO0][^A-Za-z0-9]{0,6}?[-=~]?\\s?(\\d{1,2})(?!\\d)','i').exec(t);
+  let ssp=mSP?-parseInt(mSP[1],10):null,ssq=mSQ?-parseInt(mSQ[1],10):null;
+  if(ssp!==null&&(ssp>-40||ssp<-140))ssp=null;
+  if(ssq!==null&&(ssq>-1||ssq<-35))ssq=null;
+  if(ssp===null&&ssq===null&&old.kind==='5g'){ssp=old.rsrp;ssq=old.rsrq}
   const row=rsrp!==null||rsrq!==null;
-  return {cell:old.cell,rsrp:rsrp,rsrq:rsrq,kind:nr?'5g':(old.lte?'5g':(row?'4g':old.kind)),nr:nr,row:row};
+  return {cell:old.cell,rsrp:rsrp,rsrq:rsrq,ssp:ssp,ssq:ssq,kind:nr?'5g':(old.lte?'5g':(row?'4g':old.kind)),nr:nr,row:row};
 }
 function ocrGmonMerge(rs){
   const row=rs.filter(r=>r.row);
-  const o={cell:'',rsrp:null,rsrq:null,kind:rs.some(r=>r.nr)?'5g':(row.length?'4g':((rs[0]&&rs[0].kind)||'4g'))};
+  const o={cell:'',rsrp:null,rsrq:null,ssp:null,ssq:null,kind:rs.some(r=>r.nr)?'5g':(row.length?'4g':((rs[0]&&rs[0].kind)||'4g'))};
   rs.forEach(r=>{if((r.cell||'').length>o.cell.length)o.cell=r.cell});
+  rs.forEach(r=>{
+    if(o.ssp===null&&r.ssp!==null&&r.ssp!==undefined)o.ssp=r.ssp;
+    if(o.ssq===null&&r.ssq!==null&&r.ssq!==undefined)o.ssq=r.ssq;
+  });
   (row.length?row:rs).forEach(r=>{
     if(o.rsrp===null&&r.rsrp!==null&&r.rsrp!==undefined)o.rsrp=r.rsrp;
     if(o.rsrq===null&&r.rsrq!==null&&r.rsrq!==undefined)o.rsrq=r.rsrq;
@@ -751,17 +762,19 @@ function ocrGmonMerge(rs){
 }
 function ocrBoxInfo(texts){
   // Isi tiap kotak merah: "5G NSA" / band nXX => 5G, band Bxx => 4G, angka RSRP (-40..-140) dan RSRQ (-1..-35)
-  const o={nr:false,lte:false,rsrp:null,rsrq:null};
+  const o={nr:false,lte:false,rsrp:null,rsrq:null,ssp:null,ssq:null};
   texts.forEach(t0=>{
     const t=ocrNorm(t0).replace(/\n/g,' ');
     if(/(?<![A-Za-z])NSA(?![A-Za-z])/i.test(t)||/\d{3,4}\W{0,3}n(?:1|2|3|5|7|8|12|20|25|28|38|40|41|48|66|71|77|78|79)(?![A-Za-z0-9])/i.test(t)){o.nr=true;return}
     if(/B[A4]N[D0O]/i.test(t)||/(?<![A-Za-z0-9])B(?:1|2|3|5|7|8|12|17|20|26|28|38|39|40|41)(?![A-Za-z0-9])/i.test(t)){o.lte=true;return}
     if(!/R[S5]/i.test(t))return;
+    const ss=/(?<![A-Za-z])S[sS5$]\s?R[S5]/i.test(t);   // kotak SsRSRP / SsRSRQ (5G NR)
+    if(ss)o.nr=true;
     const re=/[-=~]?\s?(\d{1,3})(?!\d)/g;let m;
     while((m=re.exec(t))){
       const a=parseInt(m[1],10);
-      if(a>=40&&a<=140){if(o.rsrp===null)o.rsrp=-a}
-      else if(a>=1&&a<=35){if(o.rsrq===null)o.rsrq=-a}
+      if(a>=40&&a<=140){if(ss){if(o.ssp===null)o.ssp=-a}else if(o.rsrp===null)o.rsrp=-a}
+      else if(a>=1&&a<=35){if(ss){if(o.ssq===null)o.ssq=-a}else if(o.rsrq===null)o.rsrq=-a}
     }
   });
   return o;
@@ -1075,7 +1088,7 @@ function ocrBoxCanvas(img,b){
   x.putImageData(d,0,0);return c;
 }
 async function ocrBoxRead(img,run){
-  const out={nr:false,lte:false,rsrp:null,rsrq:null,n:0};
+  const out={nr:false,lte:false,rsrp:null,rsrq:null,ssp:null,ssq:null,n:0};
   let bx;try{bx=ocrRedBoxes(img)}catch(e){return out}
   if(!bx.length||bx.length>8)return out;
   out.n=bx.length;
@@ -1118,13 +1131,19 @@ async function autoOcr(){
       if(ocrIsGmon(t)&&!/HASIL|KECEPATAN/i.test(t)){
         const rs=[ocrGmon(t)];
         const bi=await ocrBoxRead(c.img,run);   // kotak merah penanda dibaca satu per satu
-        const need=()=>{const m=ocrGmonMerge(rs);return (bi.rsrp===null&&m.rsrp===null)||(bi.rsrq===null&&m.rsrq===null)||!m.cell};
+        const need=()=>{
+          const m=ocrGmonMerge(rs),nr=md!=='g4'&&(bi.nr||m.kind==='5g');
+          const p=nr?(bi.ssp!==null?bi.ssp:m.ssp):(bi.rsrp!==null?bi.rsrp:m.rsrp);
+          const q=nr?(bi.ssq!==null?bi.ssq:m.ssq):(bi.rsrq!==null?bi.rsrq:m.rsrq);
+          return p===null||q===null||!m.cell};
         for(const sc of [2.5,3.5,3]){          // cadangan: baca ulang seluruh gambar
           if(!need())break;
           rs.push(ocrGmon(await run(ocrCanvas(c.img,'norm',0,sc),T.PSM.SINGLE_BLOCK)));
         }
         const m=ocrGmonMerge(rs),kind=md==='g4'?'4g':(bi.nr?'5g':(bi.lte?'4g':m.kind));
-        res[kind]=Object.assign(res[kind]||{},{cell:m.cell,rsrp:bi.rsrp!==null?bi.rsrp:m.rsrp,rsrq:bi.rsrq!==null?bi.rsrq:m.rsrq});
+        const P=kind==='5g'?(bi.ssp!==null?bi.ssp:m.ssp):(bi.rsrp!==null?bi.rsrp:m.rsrp);   // 5G: SsRSRP, 4G: RSRP
+        const Q=kind==='5g'?(bi.ssq!==null?bi.ssq:m.ssq):(bi.rsrq!==null?bi.rsrq:m.rsrq);   // 5G: SsRSRQ, 4G: RSRQ
+        res[kind]=Object.assign(res[kind]||{},{cell:m.cell,rsrp:P,rsrq:Q});
         last=kind;
       }else{
         const lb=(c.label||'').toUpperCase();

@@ -600,6 +600,7 @@ function sum(){
   if(loc)L.push(loc);
   if(v)L.push('⏰ '+new Date(v+'T00:00:00').toLocaleDateString('en-US',{weekday:'long',month:'short',day:'numeric',year:'numeric'}));
   SG.forEach(g=>{
+    if(g==='5G'&&$('mode').value==='g4')return;   // mode 4G only: 5G tidak ditulis
     const c=$('c'+g).value.trim(),p=$('p'+g).value.trim(),q=$('q'+g).value.trim(),d=$('d'+g).value.trim(),u=$('u'+g).value.trim();
     if(!(c||p||q||d||u))return;
     L.push('',g,'📡 Serving Cell '+c,'📶 '+$('k'+g).value+' Coverage '+p+' dBm / '+$('y'+g).value+' Quality '+q+' dB','🔽 DL Throughput : '+d+' Mbps','🔼 UL Throughput : '+u+' Mbps');
@@ -622,6 +623,7 @@ function qualOf(v){
 function autoCov(){
   SG.forEach(g=>{const c=covOf($('p'+g).value);if(c)$('k'+g).value=c;const q=qualOf($('q'+g).value);if(q)$('y'+g).value=q});
 }
+$('mode').addEventListener('change',()=>sum());
 $('scard').addEventListener('input',e=>{if(e.target.id==='so')return;if(/^[pq](5G|4G)$/.test(e.target.id))autoCov();sum()});
 $('sCopy').onclick=async()=>{
   try{await navigator.clipboard.writeText($('so').value)}catch(e){$('so').select();document.execCommand('copy')}
@@ -1121,12 +1123,12 @@ async function autoOcr(){
           if(!need())break;
           rs.push(ocrGmon(await run(ocrCanvas(c.img,'norm',0,sc),T.PSM.SINGLE_BLOCK)));
         }
-        const m=ocrGmonMerge(rs),kind=bi.nr?'5g':(bi.lte?'4g':m.kind);
+        const m=ocrGmonMerge(rs),kind=md==='g4'?'4g':(bi.nr?'5g':(bi.lte?'4g':m.kind));
         res[kind]=Object.assign(res[kind]||{},{cell:m.cell,rsrp:bi.rsrp!==null?bi.rsrp:m.rsrp,rsrq:bi.rsrq!==null?bi.rsrq:m.rsrq});
         last=kind;
       }else{
         const lb=(c.label||'').toUpperCase();
-        const kind=lb==='5G'?'5g':lb==='4G'?'4g':/\b5G\b/.test(t)?'5g':/LTE|\b4G\b/i.test(t)?'4g':last;
+        const kind=md==='g4'?'4g':lb==='5G'?'5g':lb==='4G'?'4g':/\b5G\b/.test(t)?'5g':/LTE|\b4G\b/i.test(t)?'4g':last;
         if(kind)jobs.push((async()=>{
           res[kind]=res[kind]||{};
           let g=null;try{g=await ocrSpeedGeo(c.img,run)}catch(e){g=null}
